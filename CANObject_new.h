@@ -129,7 +129,7 @@ public:
      * @param buf Array of bytes to send
      * @param bytes Number of bytes to send (should be <= 8)
      */
-    void send(uint8_t* buf, int bytes)
+    int send(uint8_t* buf, int bytes)
     {
         //if (bytes > 8)
           //  return;  // TODO throw errors
@@ -137,8 +137,11 @@ public:
         memcpy(this->buffer, buf, bytes);
         CANMessageSet(CAN0_BASE, this->objNum, &this->messageObject,
                       MSG_OBJ_TYPE_TX);
+        if(this->which_frame == this->no_of_frames){
+            return -1;
+        }
         this->which_frame = this->which_frame + 1;
-        
+        return 0;
     }
 
     template<typename T>
