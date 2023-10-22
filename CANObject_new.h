@@ -117,24 +117,6 @@ public:
 class CANSenderObject : public CANObject
 {
 
-private:
-
-    void set_msg_buf(uint8_t* buf , int bytes)
-    {       
-        this->msg_completed = false;
-        this->no_of_frames = int(ceil(bytes/6.0));
-        this->which_frame = 0;
-
-        for(int i=0;i<8;i++)
-            memset(this->msg_buf[i] , 0 ,8);
-
-        for(int i =0;i<this->no_of_frames - 1;i++)
-            memcpy(msg_buf[i]  , buf + 6*i ,6);
-
-        memcpy(msg_buf[this->no_of_frames] , buf + 6*(this->no_of_frames) , bytes%6);
-
-    }
-
 public:
 
     uint8_t no_of_frames;
@@ -144,21 +126,56 @@ public:
     bool msg_completed;
   
 
+    void set_msg_buf(uint8_t* buf, int bytes)
+    {       
 
-    void send_n()
+        this->which_frame = 0;
+        this->no_of_frames = int(ceil(bytes/6.0));
+
+        for(int i=0; i<8; i++)
+            memset(this->msg_buf[i], 0, 8);
+
+        for(int i =0; i < this->no_of_frames - 1; i++)
+            memcpy(this->msg_buf[i], buf+6*i, 6);
+
+        if (bytes % 6)
+            memcpy(msg_buf[this->no_of_frames] , buf + 6*(this->no_of_frames), bytes%6);
+        else
+            memcpy(msg_buf[this->no_of_frames] , buf + 6*(this->no_of_frames), 6);
+
+    }
+
+
+    void __send(uint8_t* buf, int bytes)
     {
-        this->which_frame++;
-        if(this->which_frame > this->no_of_frames){
-            Serial.println("Error");
+        if (bytes > 8)
+            return;  // TODO throw errors
+
+        memset(this->buffer, 0, 8);
+        memcpy(this->buffer, buf, bytes);
+        CANMessageSet(CAN0_BASE, this->objNum, &this->messageObject,
+                      MSG_OBJ_TYPE_TX);
+    }
+
+
+    void _send()
+    {
+        if (!this->are_all_frames_sent())
+        {
+            __send(this->msg_buf[this->which_frame], 8);
+            this->which_frame++;
         }
-        else{
-            memset(this->buffer,0,8);
-            memcpy(this->buffer,this->msg_buf+this->which_frame-1 ,8);
-            CANMessageSet(CAN0_BASE , this->objNum , &this->messageObject , MSG_OBJ_TYPE_TX);
-            if(this->which_frame == this->no_of_frames){
-            this->msg_completed = true;                   
-            }
-        }
+        else
+            this->msg_completed = true;
+    }
+
+    int are_all_frames_sent()
+    {
+        if (this->which_frame >= this->no_of_frames)
+            this->msg_completed = true;
+        else
+            this->msg_completed = false;
+        return (this->which_frame >= this->no_of_frames)
     }
 
     /**
@@ -169,14 +186,18 @@ public:
      */
     int send(uint8_t* buf, int bytes)
     {
-        //if (bytes > 8)
-          //  return;  // TODO throw errors
-        if(this->which_frame != this->no_of_frames){
+
+        if (this->msg_completed != true){
+#if CAN_COMMON_DEBUG_SERIAL
             Serial.println("Wait while current message gets transmitted");
+#endif
             return -1;
         }
+
+        this->msg_completed = false;
         this->set_msg_buf(buf , bytes);
-        this->send_n();
+        this->_send();
+
         return 0;
     }
 
@@ -186,12 +207,12 @@ public:
      * @param value Value to send (size should be <= 8 bytes)
      */
     template <typename T>
-    void send(T value)
+    int send(T value)
     {
 #if CAN_COMMON_DEBUG_SERIAL
         Serial.println("sending size: " + String(sizeof(value)));
 #endif
-        this->send((uint8_t*)&value, sizeof(value));
+        return this->send((uint8_t*)&value, sizeof(value));
     }
 
     CANSenderObject(int messageID, int objNum)

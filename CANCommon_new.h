@@ -212,12 +212,13 @@ private:
                 Serial.println("tx");
 #endif          
                 tObj = (CANSenderObject*)(canObjects[interruptCause - 1]);
-                if(!tObj->msg_completed){
-                    delay(20);
-                    tObj->send_n();                    
+                if(!tObj->are_all_frames_sent()){
+                    tObj->_send();                    
                 }
                 else{
-                    Serial.println("Finished");
+#if CAN_COMMON_DEBUG_SERIAL
+                    Serial.println("All frames sent");
+#endif
                 }
             }
             
