@@ -101,6 +101,9 @@ private:
         Serial.println("interrupt: " + String(interruptCause));
 #endif
 
+        //Clear Interrupt First
+        CANIntClear(CAN0_BASE , interruptCause);
+
         if (interruptCause == CAN_INT_INTID_STATUS)
         {
             unsigned long sts = CANStatusGet(CAN0_BASE, CAN_STS_CONTROL);
@@ -186,10 +189,10 @@ private:
 
             showStatusLED();
         }
+
         else if (interruptCause >= 1 && interruptCause <= 32)
         {
 
-            CANIntClear(CAN0_BASE, interruptCause);
             if(canObjectsRx[interruptCause - 1])
             {
 
@@ -200,7 +203,6 @@ private:
                 CANMessageGet(CAN0_BASE , interruptCause , &(rObj->messageObject),0);
                 rObj->callback(rObj->messageObject.ui32MsgID,rObj->buffer);
                 
-
             }
 
             else if(!canObjectsRx[interruptCause - 1])
@@ -209,16 +211,14 @@ private:
 #if CAN_COMMON_DEBUG_SERIAL
                 Serial.println("tx");
 #endif          
-                
                 tObj = (CANSenderObject*)(canObjects[interruptCause - 1]);
-                if(tObj->which_frame != tObj->no_of_frames){
-                    delay(2);
-                    tObj->send(tObj->msg_buf[tObj->which_frame] , 8);                    
+                if(!tObj->msg_completed){
+                    delay(20);
+                    tObj->send_n();                    
                 }
                 else{
                     Serial.println("Finished");
                 }
-                
             }
             
         }
@@ -227,7 +227,6 @@ private:
 #if CAN_COMMON_DEBUG_SERIAL
             Serial.println("interrupt cause: " + String(interruptCause));
 #endif
-        Serial.println("Out here");
         }
     }
 

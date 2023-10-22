@@ -17,7 +17,7 @@ CAN0.finishSetup();
 void loop(){
 
 sender->setID(500);
-sender->send_many(x);
+sender->send(x);
 Serial.println("sent");
 delay(2000);
 

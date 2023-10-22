@@ -34,12 +34,12 @@ public:
     /**
      * Buffer used for storing the data in one CAN frame
      */
-    uint8_t buffer[8];
+    uint8_t buffer[8] ;
 
     /**
      * Buffer used for storing the data of all 8 frames of CAN message
     */
-    uint8_t* msg_buf[8];
+    uint8_t msg_buf[8][8];
 
     CANObject(int messageID, bool rx, int objNum)
     {
@@ -116,12 +116,50 @@ public:
  */
 class CANSenderObject : public CANObject
 {
-public:
 
+private:
+
+    void set_msg_buf(uint8_t* buf , int bytes)
+    {       
+        this->msg_completed = false;
+        this->no_of_frames = int(ceil(bytes/6.0));
+        this->which_frame = 0;
+
+        for(int i=0;i<8;i++)
+            memset(this->msg_buf[i] , 0 ,8);
+
+        for(int i =0;i<this->no_of_frames - 1;i++)
+            memcpy(msg_buf[i]  , buf + 6*i ,6);
+
+        memcpy(msg_buf[this->no_of_frames] , buf + 6*(this->no_of_frames) , bytes%6);
+
+    }
+
+public:
 
     uint8_t no_of_frames;
 
     uint8_t which_frame;
+
+    bool msg_completed;
+  
+
+
+    void send_n()
+    {
+        this->which_frame++;
+        if(this->which_frame > this->no_of_frames){
+            Serial.println("Error");
+        }
+        else{
+            memset(this->buffer,0,8);
+            memcpy(this->buffer,this->msg_buf+this->which_frame-1 ,8);
+            CANMessageSet(CAN0_BASE , this->objNum , &this->messageObject , MSG_OBJ_TYPE_TX);
+            if(this->which_frame == this->no_of_frames){
+            this->msg_completed = true;                   
+            }
+        }
+    }
 
     /**
      * Send a speific number of bytes with this sender's ID
@@ -133,31 +171,15 @@ public:
     {
         //if (bytes > 8)
           //  return;  // TODO throw errors
-        memset(this->buffer, 0, 16);
-        memcpy(this->buffer, buf, bytes);
-        CANMessageSet(CAN0_BASE, this->objNum, &this->messageObject,
-                      MSG_OBJ_TYPE_TX);
-        if(this->which_frame == this->no_of_frames){
+        if(this->which_frame != this->no_of_frames){
+            Serial.println("Wait while current message gets transmitted");
             return -1;
         }
-        this->which_frame = this->which_frame + 1;
+        this->set_msg_buf(buf , bytes);
+        this->send_n();
         return 0;
     }
 
-    template<typename T>
-    void send_many(T value){
-        uint8_t* data_ptr = (uint8_t*)(&value);
-        uint8_t data_size = sizeof(T);
-        this->no_of_frames = (data_size/6 + 1) ? (data_size%6) : (data_size/6);
-        for(int i = 0;i < this->no_of_frames;i++)
-        {
-            this->msg_buf[i] = new uint8_t[16];
-            this->msg_buf[i] = data_ptr + i;
-        }
-        
-        this->which_frame = 0;
-        this->send(this->msg_buf[which_frame] , 8);
-    }
     /**
      * Send a value with this sender's ID
      *
@@ -179,6 +201,9 @@ public:
         this->messageObject.ui32MsgLen = 8u;
         this->messageObject.ui32MsgID = messageID;
         this->messageObject.pui8MsgData = this->buffer;
+        this->msg_completed = true;
+        this->no_of_frames = 0;
+        this->which_frame = 0;
     }
 };
 
