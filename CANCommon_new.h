@@ -5,7 +5,6 @@
 // TODO EEPROM
 
 // TODO redo how LEDs blink
-
 #ifndef CAN_COMMON_H
 #define CAN_COMMON_H
 
@@ -27,8 +26,12 @@
 
 extern time_keeper CAN_tmr;
 
-//callback to call the timer callback
+/**
+ * callback to call the timer callback
+ */
 void tmr_callback(int,uint8_t*);
+
+
 /**
  * Class containing common functions for interacting with a CAN peripheral
  */
@@ -48,9 +51,14 @@ private:
     CANObject* canObjects[32];
     
     /**
-     * List of Rx or Tx for CAN objects
-    */
+     * List of Rx true or false for CAN objects
+     */
     bool canObjectsRx[32];
+
+    /**
+     * List of CAN Receive Message Buffers
+     */
+    Receive_Message_Buffer canReceiveBufs[10];
 
     /**
      * List of all settable parameters
@@ -101,7 +109,9 @@ private:
         Serial.println("interrupt: " + String(interruptCause));
 #endif
 
-        //Clear Interrupt First
+        /**
+         * Clear the interrupt
+        */
         CANIntClear(CAN0_BASE , interruptCause);
 
         if (interruptCause == CAN_INT_INTID_STATUS)
@@ -163,7 +173,7 @@ private:
             else if (sts & CAN_STATUS_LEC_ACK)
             {
 #if CAN_COMMON_DEBUG_SERIAL
-                Serial.println("Lacked Ack");
+                Serial.println("LACKED ACK");
 #endif
                 // lacked an ACK for our last TX
 
@@ -175,7 +185,7 @@ private:
             else
             {
 #if CAN_COMMON_DEBUG_SERIAL
-                Serial.println("Other Status Interrupt");
+                Serial.println("OTHER STATUS INTERRUPT");
 #endif
                 // TODO add more status checks
 
@@ -193,42 +203,87 @@ private:
         else if (interruptCause >= 1 && interruptCause <= 32)
         {
 
+            /**
+             * Receive interrupt
+            */
             if(canObjectsRx[interruptCause - 1])
             {
 
 #if CAN_COMMON_DEBUG_SERIAL
                 Serial.println("rx");
 #endif
-                rObj = (CANReceiverObject*)(canObjects[interruptCause - 1]);
+
+                bool message_present = false;
+
+                rObj = (CANReceiverObject*)canObjects[interruptCause-1];
+
                 CANMessageGet(CAN0_BASE , interruptCause , &(rObj->messageObject),0);
-                rObj->callback(rObj->messageObject.ui32MsgID,rObj->buffer);
+
+                /**
+                 * Going through all receive message buffer objects to check whether this message has already been set
+                */
+                for(int i =0;i<10;i++){
+                    if(!canReceiveBufs[i].empty){
+                        if(canReceiveBufs[i].obj_num == interruptCause-1)
+                        {
+                            canReceiveBufs[i].frame_received(rObj->messageObject.pui8MsgData);
+                            message_present = true;
+                            break;
+                        }
+                    }
+                }
+
+                /**
+                 * Going through all receive message buffer objects to find an empty one to set
+                */
+                if(!message_present)
+                {
+                    for(int i=0;i<10;i++){
+                        if(canReceiveBufs[i].empty)
+                        {
+                            canReceiveBufs[i].set_msg_buffer_obj(interruptCause , rObj->messageObject);
+                            canReceiveBufs[i].frame_received(rObj->messageObject.pui8MsgData);
+                            break;
+                        }
+                    }
+                }
                 
             }
 
+            /**
+             * Transmit interrupt
+            */
             else if(!canObjectsRx[interruptCause - 1])
             {
-
 #if CAN_COMMON_DEBUG_SERIAL
                 Serial.println("tx");
 #endif          
                 tObj = (CANSenderObject*)(canObjects[interruptCause - 1]);
+                /**
+                 * Frame pending transmission
+                */
                 if(!tObj->are_all_frames_sent()){
                     tObj->_send();                    
                 }
                 else{
 #if CAN_COMMON_DEBUG_SERIAL
+                    /**
+                     * Transmission of message completed
+                    */
                     Serial.println("All frames sent");
 #endif
                 }
             }
             
         }
+
         else
         {
 #if CAN_COMMON_DEBUG_SERIAL
             Serial.println("interrupt cause: " + String(interruptCause));
 #endif
         }
+        
     }
 
     /**
@@ -436,7 +491,6 @@ public:
             CANIntRegister(CAN0_BASE, baseCanCallback);
             CANIntEnable(CAN0_BASE,
                          CAN_INT_MASTER | CAN_INT_ERROR | CAN_INT_STATUS);
-            // CANIntEnable(CAN0_BASE, CAN_INT_MASTER | CAN_INT_ERROR);
             CANEnable(CAN0_BASE);  // Enables CAN
         }
         else
@@ -453,7 +507,9 @@ public:
         pinMode(PF_2, OUTPUT);
         pinMode(PF_3, OUTPUT);
 
-        // Starts the timer - this timer is used for time synchronization purposes
+        /**
+         * Start the timer used for time synchronization purposes
+         */
         CAN_tmr.timer_start();
 
         // This creates a CAN Receiver object for time synchronization CAN message
@@ -492,8 +548,8 @@ public:
     void createReceiver(int priority, int messageID,
                         void (*callback)(int id, uint8_t* buf))
     {
-        // create a new CANObject, set up the tCANMsgObject, and add it to the
-        // array of objects
+        // create a new CANObject, set up the tCANMsgObject, add it to the
+        // array of objects, and update the Rx true array of objects
         auto obj = new CANReceiverObject(messageID, priority, callback);
         canObjects[priority - 1] = obj;
         canObjectsRx[priority - 1] = true;
@@ -511,18 +567,18 @@ public:
     void createReceiver(int priority, int filter, int mask,
                         void (*callback)(int id, uint8_t* buf))
     {
-        // create a new CANObject, set up the tCANMsgObject, and add it to the
-        // array of objects
+        // create a new CANObject, set up the tCANMsgObject,add it to the
+        // array of objects, and update the Rx true array of objects
         auto obj = new CANReceiverObject(filter, mask, priority, callback);
         canObjects[priority - 1] = obj;
         canObjectsRx[priority - 1] = true;
     }
 
     /**
-     * Create a sender for a specific message ID
+     * @param messageID ID to send messag     * Create a sender for a specific message ID
      *
      * @param priority Priority of the CAN Message Object
-     * @param messageID ID to send messages in
+es in
      * @returns An object that you can use to send messages in the specified ID
      */
     CANSenderObject* createSender(int priority, int messageID)
@@ -588,7 +644,12 @@ public:
         }
     }
 
-    CANCommon() {}
+    CANCommon() 
+    {
+        for(int i =0;i<10;i++){
+            canReceiveBufs[i] = Receive_Message_Buffer();
+        }
+    }
 };
 
 template <>
