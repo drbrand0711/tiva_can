@@ -35,7 +35,6 @@ void tmr_callback(int,uint8_t*);
 /**
  * Class containing common functions for interacting with a CAN peripheral
  */
-template <int Peripheral>
 class CANCommon
 {
 private:
@@ -61,39 +60,9 @@ private:
     Receive_Message_Buffer canReceiveBufs[10];
 
     /**
-     * List of all settable parameters
-     */
-    std::vector<CANParameter> parameters;
-
-    /**
      * Whether the red LED PIN should not be touched.
      */
     bool redLedDisable = false;
-
-    /**
-     * Object used for responding to commands
-     */
-    CANSenderObject* commandResponse;
-
-    /**
-     * Sender object for heartbeats
-     */
-    CANSenderObject* heartbeatSender;
-
-    /**
-     * Time at which the last heartbeat was sent in milliseconds
-     */
-    unsigned long lastHeartbeat = 0;
-
-    /**
-     * Heartbeat configuration
-     */
-    CANHeartbeatConfig heartbeatConfig;
-
-    /**
-     * Command configuration
-     */
-    CANCommandConfig commandConfig;
 
     /**
      * Callback used internally as an interrupt handler to call the right
@@ -210,7 +179,7 @@ private:
             {
 
 #if CAN_COMMON_DEBUG_SERIAL
-                Serial.println("rx");
+                Serial.println("RX INTERRUPT");
 #endif
 
                 bool message_present = false;
@@ -256,8 +225,9 @@ private:
             else if(!canObjectsRx[interruptCause - 1])
             {
 #if CAN_COMMON_DEBUG_SERIAL
-                Serial.println("tx");
+                Serial.println("TX INTERRUPT");
 #endif          
+
                 tObj = (CANSenderObject*)(canObjects[interruptCause - 1]);
                 /**
                  * Frame pending transmission
@@ -328,71 +298,6 @@ private:
     }
 
     /**
-     * Internal callback for CAN commands
-     */
-    void commandCallback(uint8_t buf[])
-    {
-        int commandId = *((short*)buf);
-
-        if (commandId == commandConfig.getParamID ||
-            commandId == commandConfig.setParamID)
-        {
-            short paramID = *(short*)buf;
-
-#if CAN_COMMON_DEBUG_SERIAL
-            Serial.println("get param ID: " + String(paramID));
-#endif
-
-            // find the parameter with the corresponding ID
-            for (CANParameter p : parameters)
-            {
-                if (p.paramID == paramID)
-                {
-                    if (commandId == commandConfig.getParamID)
-                    {
-                        // make a buffer to send
-                        uint8_t sendBuf[8];
-
-                        memcpy(sendBuf, buf, 8);
-                        memcpy(&sendBuf[4], p.param, p.size);
-
-                        commandResponse->send(sendBuf, 8);
-                    }
-                    else
-                    {
-                        // copy the buf to the param
-                        memcpy(p.param, &buf[4], p.size);
-                    }
-
-                    return;
-                }
-            }
-
-#if CAN_COMMON_DEBUG_SERIAL
-            Serial.println("failed to retrieve parameter");
-#endif
-        }
-
-        if (commandId == commandConfig.shutdownID)
-        {
-            if (commandConfig.shutdownCallback)
-                commandConfig.shutdownCallback();
-            // TODO stop receiving heartbeats here
-        }
-
-        if (commandId == commandConfig.resetID)
-            SysCtlReset();
-    }
-
-    /**
-     * Call base communicator's CAN callback
-     */
-    static void baseCommandCallback(int id, uint8_t buf[])
-    {
-        baseCommunicator->commandCallback(buf);
-    }
-
-    /**
      * Change the LED color based on the current status
      */
     void showStatusLED()
@@ -460,44 +365,38 @@ public:
         baseCommunicator = this;
         this->redLedDisable = redLedDisable;
 
-        if (Peripheral == 0)
+    
+        // Set up CAN
+        SysCtlPeripheralEnable(SYSCTL_PERIPH_CAN0);
+        while (!SysCtlPeripheralReady(SYSCTL_PERIPH_CAN0)) {}
+
+        switch (port)
         {
-            // Set up CAN
-            SysCtlPeripheralEnable(SYSCTL_PERIPH_CAN0);
-            while (!SysCtlPeripheralReady(SYSCTL_PERIPH_CAN0)) {}
+        case GPIO_PORTB_BASE:
+            GPIOPinTypeCAN(GPIO_PORTB_BASE, GPIO_PIN_4 | GPIO_PIN_5);
+            GPIOPinConfigure(GPIO_PB4_CAN0RX);
+            GPIOPinConfigure(GPIO_PB5_CAN0TX);
+            break;
 
-            switch (port)
-            {
-            case GPIO_PORTB_BASE:
-                GPIOPinTypeCAN(GPIO_PORTB_BASE, GPIO_PIN_4 | GPIO_PIN_5);
-                GPIOPinConfigure(GPIO_PB4_CAN0RX);
-                GPIOPinConfigure(GPIO_PB5_CAN0TX);
-                break;
+        case GPIO_PORTE_BASE:
+            GPIOPinTypeCAN(GPIO_PORTE_BASE, GPIO_PIN_4 | GPIO_PIN_5);
+            GPIOPinConfigure(GPIO_PE4_CAN0RX);
+            GPIOPinConfigure(GPIO_PE5_CAN0TX);
+            break;
 
-            case GPIO_PORTE_BASE:
-                GPIOPinTypeCAN(GPIO_PORTE_BASE, GPIO_PIN_4 | GPIO_PIN_5);
-                GPIOPinConfigure(GPIO_PE4_CAN0RX);
-                GPIOPinConfigure(GPIO_PE5_CAN0TX);
-                break;
-
-            default:
-                // TODO throw error here
-                return;
-            }
-
-            CANInit(CAN0_BASE);  // Initialises CAN Controller afer reset
-            CANBitRateSet(CAN0_BASE, SysCtlClockGet(), bitRate);
-
-            CANIntRegister(CAN0_BASE, baseCanCallback);
-            CANIntEnable(CAN0_BASE,
-                         CAN_INT_MASTER | CAN_INT_ERROR | CAN_INT_STATUS);
-            CANEnable(CAN0_BASE);  // Enables CAN
-        }
-        else
-        {
-            // TODO add CAN 1
+        default:
+            // TODO throw error here
             return;
         }
+
+        CANInit(CAN0_BASE);  // Initialises CAN Controller afer reset
+        CANBitRateSet(CAN0_BASE, SysCtlClockGet(), bitRate);
+
+        CANIntRegister(CAN0_BASE, baseCanCallback);
+        CANIntEnable(CAN0_BASE,
+                     CAN_INT_MASTER | CAN_INT_ERROR | CAN_INT_STATUS);
+        CANEnable(CAN0_BASE);  // Enables CAN
+        
 
         IntMasterEnable();
 
@@ -587,61 +486,6 @@ es in
         canObjects[priority - 1] = obj;
         canObjectsRx[priority - 1] = false;
         return obj;
-    }
-
-    /**
-     * Add a settable parameter
-     *
-     * @param paramID How this parameter will be referred to in CAN messages
-     * @param param Pointer to the parameter
-     * @param callback Callback for when this parameter is set
-     */
-    template <typename T>
-    void registerParam(short paramID, T* param,
-                       void (*callback)(uint8_t buf[]) = nullptr)
-    {
-        parameters.push_back(CANParameter(paramID, param, callback));
-    }
-
-    /**
-     * Configure heartbeats
-     *
-     * @param heartbeatConfig Heartbeat configuration object
-     */
-    void configureHeartbeats(CANHeartbeatConfig heartbeatConfig)
-    {
-        this->heartbeatConfig = heartbeatConfig;
-        heartbeatSender =
-            createSender(heartbeatConfig.txPriority, heartbeatConfig.txId);
-
-        // TODO heartbeat receiver
-    }
-
-    /**
-     * Configure commands that could be sent through a command message
-     *
-     * @param commandConfig Command config object
-     */
-    void createCommandListener(CANCommandConfig commandConfig)
-    {
-        this->commandConfig = commandConfig;
-        this->createReceiver(commandConfig.priority, commandConfig.messageID,
-                             baseCommandCallback);
-    }
-
-    /**
-     * You should call this in your `loop` function to send heartbeats.
-     * This is in `loop` and not on a timer to make sure that we stop sending
-     * heartbeats when execution is blocked.
-     */
-    void heartbeatLoop()
-    {
-        unsigned long now = millis();
-        if (now - lastHeartbeat >= heartbeatConfig.txDelay)
-        {
-            lastHeartbeat = now;
-            heartbeatSender->send(now);
-        }
     }
 
     CANCommon() 
