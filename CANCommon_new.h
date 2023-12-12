@@ -1,3 +1,4 @@
+
 // TODO have a separate .cpp file for function definitions
 
 // TODO serial
@@ -195,7 +196,7 @@ private:
                     if(!canReceiveBufs[i].empty){
                         if(canReceiveBufs[i].obj_num == interruptCause-1)
                         {
-                            canReceiveBufs[i].frame_received(rObj->messageObject.pui8MsgData);
+                            canReceiveBufs[i].frame_received(rObj->messageObject.ui32MsgID , rObj->messageObject.pui8MsgData);
                             message_present = true;
                             break;
                         }
@@ -210,8 +211,8 @@ private:
                     for(int i=0;i<10;i++){
                         if(canReceiveBufs[i].empty)
                         {
-                            canReceiveBufs[i].set_msg_buffer_obj(interruptCause , rObj->messageObject);
-                            canReceiveBufs[i].frame_received(rObj->messageObject.pui8MsgData);
+                            canReceiveBufs[i].set_msg_buffer_obj(interruptCause ,rObj->messageObject.ui32MsgID, rObj->messageObject.pui8MsgData);
+                            canReceiveBufs[i].frame_received(rObj->messageObject.ui32MsgID , rObj->messageObject.pui8MsgData);
                             break;
                         }
                     }
@@ -496,9 +497,8 @@ es in
     }
 };
 
-template <>
-CANCommon<0>* CANCommon<0>::baseCommunicator = nullptr;
-CANCommon<0> CAN0 = CANCommon<0>();
+CANCommon* CANCommon::baseCommunicator = nullptr;
+CANCommon CAN0 = CANCommon();
 
 void tmr_callback(int id , uint8_t buf[])
 {
