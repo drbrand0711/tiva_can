@@ -21,11 +21,13 @@
 //Maximum time between two time sync messages
 #define MAX_DELAY_TIME_SYNC 40
 
+#define IST_offset 19800000 //Offset to  change from UTC time format to IST  
+
 #if CAN_TIMER_DEBUG
-  #define IST_offset 19800000 //Offset to  change from UTC time format to IST  
   uint8_t timer_debug_serial_msg[12] = {9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 9, 9}; // 9 is for padding purposes
 #endif
 
+#define MSEC_IN_DAY 86400000
 
 void tmr_int();
 
@@ -49,9 +51,12 @@ public:
   //Interrupt for when timestamp msg not received for certain duration
   void CAN_tmr_int()
   {
+    
     if(TimerIntStatus(this->CAN_tmr_base , false) == TIMER_TIMA_TIMEOUT)
     {
       TimerIntClear(this->CAN_tmr_base , TIMER_TIMA_TIMEOUT);
+
+      //Update the CAN_timestamp_msg with Timer's Load Value
       this->CAN_timestamp_msg += int(this->CAN_tmr_load_val *1000.0 / SysCtlClockGet() );
 
       #if CAN_TIMER_DEBUG 
@@ -62,17 +67,18 @@ public:
         
         for (int j = 0; j < 8; j++)
           timer_debug_serial_msg[2 + j] = time_buf[j];
-        Serial.println("Hi");
         Serial.write(timer_debug_serial_msg, 12);
       #endif
 
     }
   }
 
+  //Get the timestamp relative to a single day of 24 hours
   uint32_t get_time_of_day()
   {
     long long complete_ts = this->get_time();
-    uint32_t time_of_day = complete_ts % 86400000;
+
+    uint32_t time_of_day = complete_ts % MSEC_IN_DAY;
     return time_of_day;
   }
 
@@ -105,7 +111,7 @@ public:
     this->CAN_tmr_base = tmr_base;
     this->CAN_tmr_load_val = load_val;
     this->CAN_timestamp_msg = 0;
-    //TimerUpdateMode(this->CAN_tmr_base, TIMER_A, TIMER_UP_LOAD_IMMEDIATE);
+  
     TimerLoadSet(this->CAN_tmr_base, TIMER_A, load_val);
     TimerIntEnable(this->CAN_tmr_base, TIMER_TIMA_TIMEOUT);
     TimerIntRegister(this->CAN_tmr_base, TIMER_A, tmr_int);
@@ -125,10 +131,9 @@ public:
   #if CAN_TIMER_DEBUG
     void print_IST_Time(uint32_t time)
     {
-      uint32_t IST_time = time + IST_offset;
+      uint32_t IST_time = (time + IST_offset)%86400000;
       int msec = IST_time % 1000;
       IST_time /= 1000;
-      IST_time = IST_time % 86400;
       int s = IST_time % 60;
       IST_time /= 60;
       int m = IST_time % 60;

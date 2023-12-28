@@ -267,13 +267,9 @@ public:
     uint8_t buffer[8] ;
 
 
-    CANObject(int messageID, bool rx, int objNum)
+    CANObject()
     {
-        this->messageObject = tCANMsgObject();
-        this->messageID = messageID;
-        this->rx = rx;
-        this->objNum = objNum;
-        
+
     }
 
     /**
@@ -296,37 +292,9 @@ class CANReceiverObject : public CANObject
 {
 public:
 
-    CANReceiverObject(int messageID, int objNum,
-                      void (*callback)(int id, uint8_t buf[]))
-        : CANObject(messageID, objNum, true)
+    CANReceiverObject()
+        : CANObject()
     {
-        this->messageObject.ui32MsgID = messageID;
-        this->messageObject.ui32MsgIDMask = 0x1FFFFFFF;
-        this->messageObject.ui32Flags = MSG_OBJ_EXTENDED_ID |
-                                        MSG_OBJ_RX_INT_ENABLE |
-                                        MSG_OBJ_USE_EXT_FILTER;
-        this->messageObject.pui8MsgData = this->buffer;
-        obj_callback[objNum - 1] = callback;
-        CANMessageSet(CAN0_BASE, objNum, &this->messageObject, MSG_OBJ_TYPE_RX);
-
-#if CAN_COMMON_DEBUG_SERIAL
-        Serial.println("set can message object " + String(objNum));
-#endif
-    }
-
-    CANReceiverObject(int messageID, int mask, int objNum,
-                      void (*callback)(int id, uint8_t buf[]))
-        : CANObject(messageID, objNum, true)
-    {
-        this->messageObject.ui32MsgID = messageID;
-        this->messageObject.ui32MsgIDMask = mask;
-        this->messageObject.ui32Flags = MSG_OBJ_EXTENDED_ID |
-                                        MSG_OBJ_RX_INT_ENABLE |
-                                        MSG_OBJ_USE_EXT_FILTER | CAN_INT_MASTER;
-        this->messageObject.pui8MsgData = this->buffer;
-        obj_callback[objNum - 1] = callback;
-        CANMessageSet(CAN0_BASE, objNum, &this->messageObject, MSG_OBJ_TYPE_RX);
-
 #if CAN_COMMON_DEBUG_SERIAL
         Serial.println("set can message object " + String(objNum));
 #endif
@@ -418,6 +386,7 @@ public:
         Serial.println("");
         Serial.println(this->msg_buf[0][0] + 256*this->msg_buf[0][1] + 256*256*this->msg_buf[0][2] + 256*256*256*this->msg_buf[0][3]);
 
+        return SUCCESS;
     } 
 
     int __send(uint8_t* buf, int bytes)
@@ -504,18 +473,13 @@ public:
         return this->send((uint8_t*)&value, sizeof(value));
     }
 
-    CANSenderObject(int messageID, int objNum)
-        : CANObject(messageID, false , objNum)
+    CANSenderObject()
+        : CANObject()
     {
-        this->messageObject.ui32Flags = MSG_OBJ_EXTENDED_ID | MSG_OBJ_TX_INT_ENABLE | CAN_INT_MASTER;
-        this->messageObject.ui32MsgLen = 8u;
-        this->messageObject.ui32MsgID = messageID;
-        this->messageObject.pui8MsgData = this->buffer;
-        this->msg_completed = true;
-        this->no_of_frames = 0;
-        this->which_frame = 0;
-	    this->rndm_msg_identifier = 0;
+
     }
 };
+
+
 
 #endif
