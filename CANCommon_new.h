@@ -23,8 +23,8 @@
 #include <pin_map.h>
 #include <sysctl.h>
 #include <vector>
-#include "timestamp.h"
 
+//Timer defined in timestamp.h
 extern time_keeper CAN_tmr;
 
 /**
@@ -73,8 +73,10 @@ private:
     {
         unsigned long interruptCause =
             CANIntStatus(CAN0_BASE, CAN_INT_STS_CAUSE);
+
         CANReceiverObject* rObj = nullptr;
         CANSenderObject* tObj = nullptr;
+
 #if CAN_COMMON_DEBUG_SERIAL
         Serial.println("interrupt: " + String(interruptCause));
 #endif
@@ -189,35 +191,41 @@ private:
 
                 CANMessageGet(CAN0_BASE , interruptCause , &(rObj->messageObject),0);
 
-                /**
-                 * Going through all receive message buffer objects to check whether this message has already been set
-                */
-                for(int i =0;i<10;i++){
-                    if(!canReceiveBufs[i].empty){
-                        if(canReceiveBufs[i].obj_num == interruptCause-1)
-                        {
-                            canReceiveBufs[i].frame_received(rObj->messageObject.ui32MsgID , rObj->messageObject.pui8MsgData);
-                            message_present = true;
-                            break;
+                if(!(rObj->messageObject.ui32MsgID == CAN_TIME_SYNCHRONIZATION_MESSAGE_ID)){
+                    /**
+                     * Going through all receive message buffer objects to check whether this message has already been set
+                    */
+                    for(int i =0;i<10;i++){
+                        if(!canReceiveBufs[i].empty){
+                            if(canReceiveBufs[i].obj_num == interruptCause-1)
+                            {
+                                canReceiveBufs[i].frame_received(rObj->messageObject.ui32MsgID , rObj->messageObject.pui8MsgData);
+                                message_present = true;
+                                break;
+                            }
                         }
                     }
+
+                    /**
+                    * Going through all receive message buffer objects to find an empty one to set
+                    */
+                    if(!message_present)
+                    {
+                        for(int i=0;i<10;i++){
+                            if(canReceiveBufs[i].empty)
+                            {
+                                canReceiveBufs[i].set_msg_buffer_obj(interruptCause ,rObj->messageObject.ui32MsgID, rObj->messageObject.pui8MsgData);
+                                canReceiveBufs[i].frame_received(rObj->messageObject.ui32MsgID , rObj->messageObject.pui8MsgData);
+                                break;
+                            }
+                        }
+                    }
+                
                 }
 
-                /**
-                 * Going through all receive message buffer objects to find an empty one to set
-                */
-                if(!message_present)
-                {
-                    for(int i=0;i<10;i++){
-                        if(canReceiveBufs[i].empty)
-                        {
-                            canReceiveBufs[i].set_msg_buffer_obj(interruptCause ,rObj->messageObject.ui32MsgID, rObj->messageObject.pui8MsgData);
-                            canReceiveBufs[i].frame_received(rObj->messageObject.ui32MsgID , rObj->messageObject.pui8MsgData);
-                            break;
-                        }
-                    }
+                else{
+                    obj_callback[interruptCause - 1](rObj->messageObject.ui32MsgID , rObj->messageObject.pui8MsgData);
                 }
-                
             }
 
             /**
@@ -363,6 +371,7 @@ public:
     void startSetup(int port = GPIO_PORTB_BASE, int bitRate = 250000,
                     bool redLedDisable = false)
     {
+
         baseCommunicator = this;
         this->redLedDisable = redLedDisable;
 
@@ -414,6 +423,7 @@ public:
 
         // This creates a CAN Receiver object for time synchronization CAN message
         this->createReceiver(1 , CAN_TIME_SYNCHRONIZATION_MESSAGE_ID , tmr_callback);
+    
     }
 
     /**

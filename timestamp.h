@@ -69,6 +69,13 @@ public:
     }
   }
 
+  uint32_t get_time_of_day()
+  {
+    long long complete_ts = this->get_time();
+    uint32_t time_of_day = complete_ts % 86400000;
+    return time_of_day;
+  }
+
   /**
    * Starts the timer
   */
@@ -116,17 +123,17 @@ public:
 
   //print epoch time in h:m:s:ms format
   #if CAN_TIMER_DEBUG
-    void print_IST_Time(void)
+    void print_IST_Time(uint32_t time)
     {
-      long long timestamp = this->CAN_timestamp_msg + IST_offset;
-      int msec = timestamp % 1000;
-      timestamp /= 1000;
-      timestamp = timestamp % 86400;
-      int s = timestamp % 60;
-      timestamp /= 60;
-      int m = timestamp % 60;
-      timestamp /= 60;
-      int h = timestamp; 
+      uint32_t IST_time = time + IST_offset;
+      int msec = IST_time % 1000;
+      IST_time /= 1000;
+      IST_time = IST_time % 86400;
+      int s = IST_time % 60;
+      IST_time /= 60;
+      int m = IST_time % 60;
+      IST_time /= 60;
+      int h = IST_time; 
       Serial.print(h);
       Serial.print(":");
       Serial.print(m);

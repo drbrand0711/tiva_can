@@ -1,12 +1,20 @@
+
 #ifndef CAN_COMMON_CAN_OBJECT_H
 #define CAN_COMMON_CAN_OBJECT_H
 
 #define NO_OF_FRAMES_OFFSET 5
 #define WHICH_FRAME_OFFSET 2
 
+#define SUCCESS 0
+#define FAILURE -1
+
 #include <Arduino.h>
 #include <CANVars.h>
 #include <can.h>
+#include "timestamp.h"
+
+//Timer associated with CAN Messages
+extern time_keeper CAN_tmr;
 
 // Callbacks for the 32 CAN message objects
 void (*obj_callback[32])(int , uint8_t*);
@@ -20,7 +28,7 @@ public:
     /**
      * Message identifier of this message 
     */
-    uint8_t msg_id;
+    uint32_t msg_id;
 
     /**
      * Number of frames associated with this message
@@ -45,7 +53,7 @@ public:
     /**
      * The data contained in the CAN Message
     */
-    uint8_t *msg_buf;
+    uint8_t msg_buf[48];
 
     /**
      * The callback of the CAN Message object associated with this message
@@ -58,12 +66,19 @@ public:
     bool empty;
 
     /**
+     * Denotes whether frame is empty to accept a CAN message
+    */
+    bool empty_frame[8];
+
+
+    /**
      * Initialise empty receive_message_buffer object
     */
-    Receive_Message_Buffer(){
+    Receive_Message_Buffer()
+    {
         this->empty = true;
+        memset(this->empty_frame, 0, 8);
     }
-
 
 
     /**
@@ -73,9 +88,8 @@ public:
     */
     uint8_t get_no_of_frames(uint8_t *buf)
     {
-        return (buf[0] & 0b11100000) >> NO_OF_FRAMES_OFFSET;
+        return ((buf[0] & 0b11100000) >> NO_OF_FRAMES_OFFSET) + 1;
     }
-
 
 
     /**
@@ -89,7 +103,6 @@ public:
     }
 
 
-
     /**
      * Get the frame number of this frame
      * 
@@ -101,6 +114,21 @@ public:
     }
 
 
+    bool is_message_buffer_available()
+    {
+        return this->empty;
+    }
+
+    bool is_msg_id_rndm_msg_identifier_matching(uint32_t msg_id, uint8_t rndm_msg_identifier)
+    {
+        if (msg_id != this->msg_id)
+            return FAILURE;
+        if (rndm_msg_identifier != this->rndm_msg_identifier)
+            return FAILURE;
+
+        return SUCCESS;
+    }
+
 
     /**
      * Set this receive_message_buffer object for a message
@@ -108,12 +136,12 @@ public:
      * @param InterruptCause Relates to the priority of the CAN message object
      * @param CAN_msg_obj The first frame of this message
     */
-    void set_msg_buffer_obj(uint8_t InterruptCause , tCANMsgObject CAN_msg_obj)
+    int set_msg_buffer_obj(uint8_t InterruptCause , uint32_t msg_id, uint8_t* buf)
     {
-        if(this->empty == false)
+        if(!this->is_message_buffer_available())
         {
             Serial.println("Non empty message buffer");
-            return;
+            return FAILURE;
         }
 
         else
@@ -122,26 +150,19 @@ public:
             Serial.println("New message set associated with CAN Message object " + String(InterruptCause - 1));
 #endif
             this->empty = false;
-
-            this->msg_id = CAN_msg_obj.ui32MsgID;
-
-            this->rndm_msg_identifier = get_rndm_msg_id(CAN_msg_obj.pui8MsgData);
-
-            this->no_of_frames = get_no_of_frames(CAN_msg_obj.pui8MsgData);
-
-            this->which_frame = 0;
-
+            this->msg_id = msg_id;
+            this->rndm_msg_identifier = this->get_rndm_msg_id(buf);
+#if CAN_COMMON_DEBUG_SERIAL
+            Serial.println("Set msg with rndm msg id "+String(this->rndm_msg_identifier));
+#endif            
+            this->no_of_frames = this->get_no_of_frames(buf);
             this->obj_num = InterruptCause - 1;
-
             this->callback = obj_callback[this->obj_num];
-
-            //Dynamically allocated, deleted upon calling  the callback
-            this-> msg_buf = new uint8_t[6*(this->no_of_frames)];
-
-            memset(this->msg_buf , 0 ,6*(this->no_of_frames) );
+            memset(this->msg_buf , 0, 48);
+            memset(this->empty_frame, 0, 8);
         }
+        return SUCCESS;
     }
-
 
 
     /**
@@ -149,27 +170,56 @@ public:
     * 
     * @param buf Data of the frame received
     */
-    void frame_received(uint8_t *buf)
+    int frame_received(uint32_t msg_id, uint8_t *buf)
     {
-        this->which_frame += 1;
 
-        if(this->which_frame != get_which_frame(buf))
-            Serial.println("Error in number of frame received gotten " + String(get_which_frame(buf)) + ",Expected " + String(this->which_frame));
+        if (this->empty)
+        {
+            Serial.println("Message not allocated");
+            return FAILURE;
+        }
 
-        else if(this->rndm_msg_identifier != get_rndm_msg_id(buf))
+        if(this->msg_id != msg_id)
+        {
+            Serial.println("Error in message ID");
+            return FAILURE;
+        }
+
+        if(this->rndm_msg_identifier != this->get_rndm_msg_id(buf))
+        {
             Serial.println("Error in random message identifier");
+            return FAILURE;
+        }
+
+        if(this->empty_frame[this->get_which_frame(buf)] == 1)
+        {    
+            Serial.println("Error in number of frame received gotten");
+            return FAILURE;
+        }
+
+        if(this->get_no_of_frames(buf) != this->no_of_frames)
+        {
+            Serial.println("Error in number of frames");
+            return FAILURE;
+        }
 
         else
         {
-            memcpy(msg_buf + 6*(this->which_frame - 1), buf + 2, 6);
-            if(this->which_frame == this->no_of_frames)
-            {
-                this->call_receiver_obj();
-            }
+#if CAN_COMMON_DEBUG_SERIAL
+            Serial.println("Frame Received");
+#endif
+            this->which_frame = this->get_which_frame(buf);  
+            this->empty_frame[this->which_frame] = 1;
+            memcpy(msg_buf + 6*this->which_frame, buf + 2, 6);
+
+            for (int i = 0; i < this->no_of_frames; i++)
+                if (this->empty_frame[i] == 0)
+                    return SUCCESS; 
+
+            this->call_receiver_obj();
+            return SUCCESS;
         }
     }
-
-
 
     /**
      * Call the callback of the CAN Message Object
@@ -179,9 +229,9 @@ public:
     {
         this->callback(this->msg_id , this->msg_buf);
         this->empty = true;
-        //Deallocate memory to the msg_buf;
-        delete this->msg_buf;
+        memset(this->empty_frame, 0, 8);
     }
+
 };
 
 
@@ -216,10 +266,6 @@ public:
      */
     uint8_t buffer[8] ;
 
-    /**
-     * Buffer used for storing the data of all 8 frames of CAN message
-    */
-    uint8_t msg_buf[8][8];
 
     CANObject(int messageID, bool rx, int objNum)
     {
@@ -303,61 +349,107 @@ public:
   
     uint8_t rndm_msg_identifier;
 
-    void set_msg_buf(uint8_t* buf, int bytes)
+    uint32_t timestamp;
+
+    /**
+     * Buffer used for storing the data of all 8 frames of CAN message
+    */
+    uint8_t msg_buf[8][8];
+
+
+    int set_msg_buf(uint8_t* buf, int bytes)
     {       
 	
-	    this->rndm_msg_identifier = (this->rndm_msg_identifier + 1)%64;
+        
+	    this->rndm_msg_identifier = (this->rndm_msg_identifier + 1) % 64;
+        this->no_of_frames = int(ceil((bytes+4)/6.0));
+        this->timestamp = CAN_tmr.get_time_of_day();
+        CAN_tmr.print_IST_Time(this->timestamp);
+
+        if (this->no_of_frames > 8)
+            return FAILURE;
+
         this->which_frame = 0;
-        this->no_of_frames = int(ceil(bytes/6.0));
+#if CAN_COMMON_DEBUG_SERIAL
         Serial.println("no of frames is "+ String(this->no_of_frames));
-        for(int i=0; i<8; i++)
+#endif    
+        for(int i = 0; i < 8; i++)
             memset(this->msg_buf[i], 0, 8);
 
-        for(int i =0; i < this->no_of_frames - 1; i++)
+        this->msg_buf[0][0] = ((this->no_of_frames - 1) << NO_OF_FRAMES_OFFSET) | ( 0 << WHICH_FRAME_OFFSET) | (1 << 1) ;
+	    this->msg_buf[0][1] = this->rndm_msg_identifier;
+
+        memcpy(this->msg_buf[0]+2 ,(uint8_t *)&timestamp , 4);
+        memcpy(this->msg_buf[0]+6 , buf  , 2);
+
+        for(int i = 1; i < this->no_of_frames - 1; i++)
         {
-	    msg_buf[i][0] = ((i+1)<<2) + ((this->no_of_frames)<<5) + ((1)<<1);
-	    msg_buf[i][1] = this->rndm_msg_identifier;
-        
-        memcpy(this->msg_buf[i] + 2, buf+6*i, 6);
+	        msg_buf[i][0] = ((this->no_of_frames - 1) << NO_OF_FRAMES_OFFSET) | ( i << WHICH_FRAME_OFFSET) | (1 << 1) ;
+	        msg_buf[i][1] = this->rndm_msg_identifier;
+            if(i == 0)
+
+            memcpy(this->msg_buf[i] + 2, buf-4+6*i, 6);
+            
         }
 
-        msg_buf[this->no_of_frames][0] = ((this->no_of_frames)<<2) +((this->no_of_frames)<<5) + ((1)<<1);
-        msg_buf[this->no_of_frames][1] = this->rndm_msg_identifier;
-        if (bytes % 6)
-            memcpy(msg_buf[this->no_of_frames] , buf + 6*(this->no_of_frames), bytes%6);
-        else
-            memcpy(msg_buf[this->no_of_frames] , buf + 6*(this->no_of_frames), 6);
+        if(this->no_of_frames != 1){
+            this->msg_buf[this->no_of_frames - 1][0] = ((this->no_of_frames - 1) << NO_OF_FRAMES_OFFSET) | ((this->no_of_frames - 1) << WHICH_FRAME_OFFSET) |  (1 << 1);
+            this->msg_buf[this->no_of_frames - 1][1] = this->rndm_msg_identifier;
 
-    }
+            if (bytes % 6)
+                memcpy(this->msg_buf[this->no_of_frames - 1] +2, buf + 6*(this->no_of_frames - 1), bytes%6);
+            else
+                memcpy(this->msg_buf[this->no_of_frames - 1] +2, buf + 6*(this->no_of_frames - 1), 6);
 
+            for(int i=0;i<8;i++)
+                for(int j=0;j<8;j++){
+                    Serial.print(this->msg_buf[i][j]);
+                    Serial.print(" ");
+                }
+            Serial.println("");
+            return SUCCESS;
 
-    void __send(uint8_t* buf, int bytes)
+        }
+        
+        for(int i=0;i<8;i++){
+            Serial.print(this->msg_buf[0][i]);
+            Serial.print(" ");
+        }
+        Serial.println("");
+        Serial.println(this->msg_buf[0][0] + 256*this->msg_buf[0][1] + 256*256*this->msg_buf[0][2] + 256*256*256*this->msg_buf[0][3]);
+
+    } 
+
+    int __send(uint8_t* buf, int bytes)
     {
         if (bytes > 8)
-            return;  // TODO throw errors
+            return FAILURE; 
 
         memset(this->buffer, 0, 8);
         memcpy(this->buffer, buf, bytes);
-        Serial.println("Message set ");
         CANMessageSet(CAN0_BASE, this->objNum, &this->messageObject,
                       MSG_OBJ_TYPE_TX);
+        
+        return SUCCESS;
     }
 
 
-    void _send()
+    int _send()
     {
         if (!this->are_all_frames_sent())
         {
-            __send(this->msg_buf[this->which_frame], 8);
+            if ( __send(this->msg_buf[this->which_frame], 8) == FAILURE)
+                return FAILURE;
             this->which_frame++;
         }
         else
             this->msg_completed = true;
+        
+        return SUCCESS;
     }
 
     int are_all_frames_sent()
     {
-        Serial.println("Which frame is " + String(this->which_frame));
         if (this->which_frame >= this->no_of_frames)
             this->msg_completed = true;
         else
@@ -374,18 +466,28 @@ public:
     int send(uint8_t* buf, int bytes)
     {
 
+        if(bytes > 48 || bytes <= 0){
+#if CAN_COMMON_DEBUG_SERIAL
+            Serial.println("Invalid number of bytes to be sent");
+#endif
+            return FAILURE;
+        }
+
         if (this->msg_completed != true){
 #if CAN_COMMON_DEBUG_SERIAL
             Serial.println("Wait while current message gets transmitted");
 #endif
-            return -1;
+            return FAILURE;
         }
 
         this->msg_completed = false;
-        this->set_msg_buf(buf , bytes);
-        this->_send();
 
-        return 0;
+        if (this->set_msg_buf(buf , bytes) == FAILURE) 
+            return FAILURE;
+        if (this->_send() == FAILURE)
+            return FAILURE;
+
+        return SUCCESS;
     }
 
     /**
