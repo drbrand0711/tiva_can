@@ -2,6 +2,8 @@
 * This library sets timer A for time synchronization and getting timestamp
 * Done by Mouna : ee22b100@smail.iitm.ac.in on Sep 15 2022
 */
+#ifndef TIMESTAMP_H
+#define TIMESTAMP_H
 
 #include <Arduino.h>
 #include <driverlib/sysctl.h>
@@ -187,3 +189,5 @@ void tmr_int()
 {
   CAN_tmr.CAN_tmr_int();
 }
+
+#endif
